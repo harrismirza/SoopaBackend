@@ -177,10 +177,6 @@ def new_crime_unsolved():
     else:
         crime['severity'] = np.random.randint(3, 8)
 
-    crimes = mongo.db.crimes.find({
-        "type": crime.get('type')
-    })
-
     crime['solved_at'] = ""
 
     crime['solved_by'] = datetime.datetime.min

@@ -11,6 +11,20 @@ app.config["MONGO_URI"] = "mongodb://localhost:27017/Soopa"
 mongo = PyMongo(app)
 
 earthRadius = 6371
+max_lat = 51.69031564760695
+min_lat = 51.29150416286872
+max_lng = 0.3226031423929305
+min_lng = -0.49931701722075333
+lat_grid_steps = 92
+lng_grid_steps = 45
+
+lat_grid_size = (max_lat - min_lat) / lat_grid_steps
+lng_grid_size = (max_lng - min_lng) / lng_grid_steps
+
+severity = {'Violence and sexual offences': 10, 'Anti-social behaviour': 3, 'Burglary': 5,
+            'Criminal damage and arson': -1, 'Other theft': -1, 'Possession of weapons': 7,
+            'Robbery': 8, 'Theft from the person': 8, 'Vehicle crime': 5, 'Other crime': -1,
+            'Public order': 9, 'Shoplifting': 2, 'Drugs': 1, 'Bicycle theft': 10}
 
 
 # Get Great Circle Distance between 2 coordinates
@@ -75,6 +89,7 @@ def get_active_crimes():
     current_lat = float(request.args.get("lat"))
     current_lng = float(request.args.get("lng"))
     radius = float(request.args.get("radius"))
+    superhero = request.args.get("superhero")
 
     active_crimes = mongo.db.crimes.find(
         {"datetime": {"$gt": datetime.datetime.now() - datetime.timedelta(minutes=5)}, "solved_time": {"$ne": 0}})
@@ -86,38 +101,124 @@ def get_active_crimes():
     for crime in active_crimes_in_radius:
         del crime["_id"]
         crime["vantage_points"] = get_tallest_buildings(crime["lat"], crime["lng"], 0.2, 3, True)
+        crime["crime_duration"] = get_crime_duration_estimate(superhero, crime["type"])
 
     return jsonify(active_crimes_in_radius)
 
 
+def get_crime_duration_estimate(superhero, crime_type):
+    crimes = list(mongo.db.crimes.find({
+        "solved_by": superhero,
+        "type": crime_type
+    }))
+
+    times = [(crime["solved_at"] - crime["datetime"]).total_seconds() for crime in crimes]
+
+    estimate = np.nanmean(times) / 60
+
+    return estimate
+
+
 @app.route("/new_crime")
 def new_crime():
-    lat = np.random.uniform(51.29150416286872, 51.69031564760695)
-    lng = np.random.uniform(-0.49931701722075333, 0.3226031423929305)
-    crime_type = random.choice(["Anti-social behaviour",
-                          "Bicycle theft",
-                          "Burglary",
-                          "Criminal damage and arson",
-                          "Drugs",
-                          "Other crime",
-                          "Other theft",
-                          "Possession of weapons",
-                          "Public order",
-                          "Robbery",
-                          "Shoplifting",
-                          "Theft from the person",
-                          "Vehicle crime",
-                          "Violence and sexual offences"])
-    severity = np.random.randint(1, 10)
-    return str(mongo.db.crimes.insert_one({
-        "type": crime_type,
-        "datetime": datetime.datetime.now(),
-        "severity": severity,
-        "lat": lat,
-        "lng": lng,
-        "solved_by": "",
-        "solved_at": 0
-    }).inserted_id)
+    crime = {}
+    crime['datetime'] = datetime.datetime.now()
+    crime['lng'] = np.random.uniform(-0.49931701722075333, 0.3226031423929305)
+    crime['lat'] = np.random.uniform(51.29150416286872, 51.69031564760695)
+    crime['type'] = np.random.choice(list(severity.keys()))
+
+    lat_param = request.args.get("lat")
+    if lat_param is not None:
+        crime["lat"] = float(lat_param)
+
+    lng_param = request.args.get("lat")
+    if lng_param is not None:
+        crime["lat"] = float(lat_param)
+
+    sev = severity[crime["type"]]
+    if sev != -1:
+        crime['severity'] = sev
+    else:
+        crime['severity'] = np.random.randint(3, 8)
+
+    crimes = mongo.db.crimes.find({
+        "type": crime.get('type')
+    })
+
+    times = [(crime["solved_at"] - crime["datetime"]).total_seconds() for crime in crimes]
+
+    solve_time = np.nanmean(times)
+    crime['solved_at'] = crime['datetime'] + datetime.timedelta(seconds=solve_time)
+
+    crime['solved_by'] = np.random.choice(['Spiderman', 'Wonder Woman', 'Ironman', 'Batman', 'Aquaman'])
+
+    return str(mongo.db.crimes.insert_one(crime).inserted_id)
+
+
+@app.route("/new_crime_unsolved")
+def new_crime_unsolved():
+    crime = {}
+    crime['datetime'] = datetime.datetime.now()
+    crime['lng'] = np.random.uniform(-0.49931701722075333, 0.3226031423929305)
+    crime['lat'] = np.random.uniform(51.29150416286872, 51.69031564760695)
+    crime['type'] = np.random.choice(list(severity.keys()))
+
+    lat_param = request.args.get("lat")
+    if lat_param is not None:
+        crime["lat"] = float(lat_param)
+
+    lng_param = request.args.get("lat")
+    if lng_param is not None:
+        crime["lat"] = float(lat_param)
+
+    sev = severity[crime["type"]]
+    if sev != -1:
+        crime['severity'] = sev
+    else:
+        crime['severity'] = np.random.randint(3, 8)
+
+    crimes = mongo.db.crimes.find({
+        "type": crime.get('type')
+    })
+
+    crime['solved_at'] = ""
+
+    crime['solved_by'] = datetime.datetime.min
+
+    return str(mongo.db.crimes.insert_one(crime).inserted_id)
+
+
+# Heatmap data
+@app.route("/heatmap")
+def heatmap_data():
+    # Get current heatmap data
+    heatmap_grid = list(mongo.db.heatmap_grid.find({}))
+    # For all crimes in the last 20 minutes, assign to nearest grid point
+    recent_crimes = list(mongo.db.crimes.find(
+        {"datetime": {"$gt": datetime.datetime.now() - datetime.timedelta(minutes=20)}}))
+
+    grid_dict = {}
+    grid_crime_dict = {}
+    for grid in heatmap_grid:
+        grid_dict[(grid["grid_x"], grid["grid_y"])] = grid
+        grid_crime_dict[(grid["grid_x"], grid["grid_y"])] = []
+
+    for crime in recent_crimes:
+        nearest_x = round((crime["lat"] - min_lat) / lat_grid_size)
+        nearest_y = round((crime["lng"] - min_lng) / lng_grid_size)
+
+        grid_crime_dict[(nearest_x, nearest_y)].append(crime)
+    # For each grid point, calculate average severity
+    output = []
+    for ((grid_x, grid_y), crimes) in grid_crime_dict.items():
+        if len(crimes) != 0:
+            grid = grid_dict[(grid_x, grid_y)]
+            average_severity = sum(crime["severity"] for crime in crimes) / len(crimes)
+            output.append((grid["centre_lat"], grid["centre_lng"], average_severity))
+
+    # Return data
+    return jsonify(output)
+
 
 # User Login
 @app.route("/user/<username>")

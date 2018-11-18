@@ -1,10 +1,10 @@
 from flask import Flask, request
-from math import sin, cos, atan, sqrt, pi
+from math import sin, cos, atan, sqrt, pi, log
 import numpy as np
 from flask_pymongo import PyMongo
 import datetime
-import random
 from flask.json import jsonify
+from bson.objectid import ObjectId
 
 app = Flask(__name__)
 app.config["MONGO_URI"] = "mongodb://localhost:27017/Soopa"
@@ -21,7 +21,7 @@ lng_grid_steps = 45
 lat_grid_size = (max_lat - min_lat) / lat_grid_steps
 lng_grid_size = (max_lng - min_lng) / lng_grid_steps
 
-severity = {'Violence and sexual offences': 10, 'Anti-social behaviour': 3, 'Burglary': 5,
+severity_map = {'Violence and sexual offences': 10, 'Anti-social behaviour': 3, 'Burglary': 5,
             'Criminal damage and arson': -1, 'Other theft': -1, 'Possession of weapons': 7,
             'Robbery': 8, 'Theft from the person': 8, 'Vehicle crime': 5, 'Other crime': -1,
             'Public order': 9, 'Shoplifting': 2, 'Drugs': 1, 'Bicycle theft': 10}
@@ -99,7 +99,6 @@ def get_active_crimes():
             lat_lng_distance(active_crime["lat"], active_crime["lng"], current_lat, current_lng) <= radius)]
 
     for crime in active_crimes_in_radius:
-        del crime["_id"]
         crime["vantage_points"] = get_tallest_buildings(crime["lat"], crime["lng"], 0.2, 3, True)
         crime["crime_duration"] = get_crime_duration_estimate(superhero, crime["type"])
 
@@ -125,7 +124,7 @@ def new_crime():
     crime['datetime'] = datetime.datetime.now()
     crime['lng'] = np.random.uniform(-0.49931701722075333, 0.3226031423929305)
     crime['lat'] = np.random.uniform(51.29150416286872, 51.69031564760695)
-    crime['type'] = np.random.choice(list(severity.keys()))
+    crime['type'] = np.random.choice(list(severity_map.keys()))
 
     lat_param = request.args.get("lat")
     if lat_param is not None:
@@ -135,7 +134,7 @@ def new_crime():
     if lng_param is not None:
         crime["lat"] = float(lat_param)
 
-    sev = severity[crime["type"]]
+    sev = severity_map[crime["type"]]
     if sev != -1:
         crime['severity'] = sev
     else:
@@ -161,7 +160,7 @@ def new_crime_unsolved():
     crime['datetime'] = datetime.datetime.now()
     crime['lng'] = np.random.uniform(-0.49931701722075333, 0.3226031423929305)
     crime['lat'] = np.random.uniform(51.29150416286872, 51.69031564760695)
-    crime['type'] = np.random.choice(list(severity.keys()))
+    crime['type'] = np.random.choice(list(severity_map.keys()))
 
     lat_param = request.args.get("lat")
     if lat_param is not None:
@@ -171,7 +170,7 @@ def new_crime_unsolved():
     if lng_param is not None:
         crime["lat"] = float(lat_param)
 
-    sev = severity[crime["type"]]
+    sev = severity_map[crime["type"]]
     if sev != -1:
         crime['severity'] = sev
     else:
@@ -187,37 +186,40 @@ def new_crime_unsolved():
 # Heatmap data
 @app.route("/heatmap")
 def heatmap_data():
-    # Get current heatmap data
-    heatmap_grid = list(mongo.db.heatmap_grid.find({}))
-    # For all crimes in the last 20 minutes, assign to nearest grid point
-    recent_crimes = list(mongo.db.crimes.find(
-        {"datetime": {"$gt": datetime.datetime.now() - datetime.timedelta(minutes=20)}}))
+    # Calculate Heatmap data based on discounted severity
+    discount_factor_scale = 0.5
+    discount_factor_seconds = 1800
+    minimum_severity_threshold = 0.005
 
-    grid_dict = {}
-    grid_crime_dict = {}
-    for grid in heatmap_grid:
-        grid_dict[(grid["grid_x"], grid["grid_y"])] = grid
-        grid_crime_dict[(grid["grid_x"], grid["grid_y"])] = []
+    discount_factor = discount_factor_scale ** (1 / discount_factor_seconds)
 
-    for crime in recent_crimes:
-        nearest_x = round((crime["lat"] - min_lat) / lat_grid_size)
-        nearest_y = round((crime["lng"] - min_lng) / lng_grid_size)
+    maximum_age = (discount_factor_seconds * (log(minimum_severity_threshold) - log(10))) / log(discount_factor_scale)
 
-        grid_crime_dict[(nearest_x, nearest_y)].append(crime)
-    # For each grid point, calculate average severity
+    # Get all crimes more recent than minimum age
+    crimes = list(
+        mongo.db.crimes.find({"datetime": {"$gt": datetime.datetime.now() - datetime.timedelta(seconds=maximum_age)}}))
+
+    # Discount severity based on age
     output = []
-    for ((grid_x, grid_y), crimes) in grid_crime_dict.items():
-        if len(crimes) != 0:
-            grid = grid_dict[(grid_x, grid_y)]
-            average_severity = sum(crime["severity"] for crime in crimes) / len(crimes)
-            output.append((grid["centre_lat"], grid["centre_lng"], average_severity))
+    for crime in crimes:
+        severity = crime["severity"] * (discount_factor**(datetime.datetime.now() - crime["datetime"]).total_seconds())
+        output.append([crime["lat"], crime["lng"], severity])
 
-    # Return data
     return jsonify(output)
 
 
 # User Login
 @app.route("/user/<username>")
 def user_login(username):
-    users = mongo.db.heroes.find_one({"Name": username})
+    users = mongo.db.heroes.find_one({"name": username})
     return jsonify(users)
+
+
+@app.route("/solved")
+def solved_crime():
+    id_param = ObjectId(request.args.get("id"))
+    superhero = request.args.get("superhero")
+
+    mongo.db.crimes.find_one_and_update({'_id': id_param}, {"$set": {"solved_by": superhero}}, upsert=False)
+    mongo.db.crimes.find_one_and_update({'_id': id_param}, {"$set": {"solved_at": datetime.datetime.now()}},
+                                        upsert=False)

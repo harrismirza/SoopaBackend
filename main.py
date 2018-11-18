@@ -219,6 +219,66 @@ def heatmap_data():
     return jsonify(output)
 
 
+@app.route("/demo/crime1")
+def demo_crime_1():
+    crime = {
+        "datetime": datetime.datetime.now(),
+        "lat": 51.524992,
+        "lng": -0.133230,
+        "type": "Anti-social behaviour",
+        "severity": 3,
+        "solved_by": "",
+        "solved_at": datetime.datetime.min
+    }
+
+    return str(mongo.db.crimes.insert_one(crime).inserted_id)
+
+
+@app.route("/demo/crime1")
+def demo_crime_1():
+    crime = {
+        "datetime": datetime.datetime.now(),
+        "lat": 51.524992,
+        "lng": -0.133230,
+        "type": "Anti-social behaviour",
+        "severity": 3,
+        "solved_by": "",
+        "solved_at": datetime.datetime.min
+    }
+
+    return str(mongo.db.crimes.insert_one(crime).inserted_id)
+
+
+@app.route("/demo/crime2")
+def demo_crime_2():
+    crime = {
+        "datetime": datetime.datetime.now(),
+        "lat": 51.522728,
+        "lng": -0.140155,
+        "type": "Drugs",
+        "severity": 1,
+        "solved_by": "",
+        "solved_at": datetime.datetime.min
+    }
+
+    return str(mongo.db.crimes.insert_one(crime).inserted_id)
+
+
+@app.route("/demo/crime3")
+def demo_crime_3():
+    crime = {
+        "datetime": datetime.datetime.now(),
+        "lat": 51.523825,
+        "lng": -0.128404,
+        "type": "Bicycle theft",
+        "severity": 10,
+        "solved_by": "",
+        "solved_at": datetime.datetime.min
+    }
+
+    return str(mongo.db.crimes.insert_one(crime).inserted_id)
+
+
 # User Login
 @app.route("/user/<username>")
 def user_login(username):
